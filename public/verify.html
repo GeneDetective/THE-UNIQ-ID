@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>UNIQ ID — Verify & Create Paraphrase</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <style>
+    body { font-family: system-ui, -apple-system, "Segoe UI", Roboto, Arial; padding: 20px; max-width:720px; margin:auto; color:#111; }
+    h1 { font-size:20px; margin-bottom:10px; }
+    .box { background:#fafafa; border-radius:8px; padding:12px; margin-bottom:12px; }
+    input[type="password"], input[type="text"] { padding:8px 10px; font-size:15px; width:100%; box-sizing:border-box; margin-bottom:8px; }
+    button { padding:8px 12px; font-size:15px; cursor:pointer; }
+    pre { background:#f6f8fa; padding:10px; border-radius:6px; white-space:pre-wrap; word-break:break-word; }
+    .ok{ color:#155724; background:#d4edda; padding:8px;border-radius:6px;}
+    .err{ color:#721c24; background:#f8d7da; padding:8px;border-radius:6px;}
+    ul.checks { margin:8px 0 12px 18px; }
+    .small { font-size:13px; color:#555; }
+    a.tx { word-break:break-all; display:inline-block; margin-top:6px;}
+  </style>
+</head>
+<body>
+  <h1>2) Verify Email & Create Paraphrase</h1>
+  <div id="stage" class="box">Loading…</div>
+
+  <script>
+  (async function () {
+    const q = new URLSearchParams(location.search);
+    const email = q.get('email') || '';
+    const token = q.get('token') || '';
+
+    const stage = document.getElementById('stage');
+
+    // Quick token presence check
+    if (!token) {
+      stage.innerHTML = '<div class="err">Missing token in the URL. Use the verification link sent to your email.</div>';
+      return;
+    }
+
+    // 1) Verify token with backend
+    try {
+      const r = await fetch('/api/verify-email', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token })
+      });
+      const j = await r.json();
+
+      if (!j || !j.success) {
+        stage.innerHTML = `<div class="err">Verification failed: ${j && j.error ? j.error : 'Invalid or expired token.'}</div>
+                           <div class="small">If your token expired request a new verification from the register page.</div>`;
+        return;
+      }
+
+      // Verified — show paraphrase form
+      // Verified — show paraphrase form with 8–16 chars limit and counter
+stage.innerHTML = `
+  <div class="ok">Email verified. Now choose a strong paraphrase (this is your permanent key to unlock your UNIQ ID package).</div>
+  <form id="f2" style="margin-top:12px;">
+    <label for="paraphrase">Paraphrase</label><br/>
+    <input id="paraphrase" name="paraphrase" type="password" placeholder="Create a strong paraphrase" autocomplete="new-password" required maxlength="16"/>
+    <div style="display:flex;justify-content:space-between;align-items:center;">
+      <div id="strength" class="small">Rules: 8–16 chars, uppercase, lowercase, digit, special (!@#$%^&*)</div>
+      <div id="lenCount" class="small">0 / 16</div>
+    </div>
+    <ul class="checks" id="checks">
+      <li id="c-len">• Minimum 8 characters</li>
+      <li id="c-max">• Maximum 16 characters</li>
+      <li id="c-upper">• At least one uppercase letter (A–Z)</li>
+      <li id="c-lower">• At least one lowercase letter (a–z)</li>
+      <li id="c-digit">• At least one digit (0–9)</li>
+      <li id="c-special">• At least one special character (!@#$%^&*)</li>
+    </ul>
+
+    <div style="display:flex;gap:8px;margin-top:8px;">
+      <button id="finishBtn" type="submit">Finish & Download Package</button>
+      <span id="working" style="display:none;">⏳ working…</span>
+    </div>
+  </form>
+
+  <div id="output" style="margin-top:12px;"></div>
+`;
+      // Grab newly inserted elements
+      const f2 = document.getElementById('f2');
+      const paraphraseInput = document.getElementById('paraphrase');
+      const checks = {
+        len: document.getElementById('c-len'),
+        upper: document.getElementById('c-upper'),
+        lower: document.getElementById('c-lower'),
+        digit: document.getElementById('c-digit'),
+        special: document.getElementById('c-special')
+      };
+      const finishBtn = document.getElementById('finishBtn');
+      const working = document.getElementById('working');
+      const output = document.getElementById('output');
+
+      // UI helpers
+      function updateChecks(v) {
+        checks.len.style.fontWeight = v.length >= 8 ? '600' : '400';
+        checks.upper.style.fontWeight = /[A-Z]/.test(v) ? '600' : '400';
+        checks.lower.style.fontWeight = /[a-z]/.test(v) ? '600' : '400';
+        checks.digit.style.fontWeight = /[0-9]/.test(v) ? '600' : '400';
+        checks.special.style.fontWeight = /[!@#$%^&*]/.test(v) ? '600' : '400';
+      }
+      paraphraseInput.addEventListener('input', (e) => updateChecks(e.target.value));
+
+      function validateParaphrase(v) {
+        const errors = [];
+        if (v.length < 8) errors.push('≥8 chars');
+        if (!/[A-Z]/.test(v)) errors.push('uppercase');
+        if (!/[a-z]/.test(v)) errors.push('lowercase');
+        if (!/[0-9]/.test(v)) errors.push('digit');
+        if (!/[!@#$%^&*]/.test(v)) errors.push('special');
+        return errors;
+      }
+
+      // Form submit handler
+      f2.addEventListener('submit', async (ev) => {
+        ev.preventDefault();
+        output.innerHTML = '';
+        const paraphrase = paraphraseInput.value || '';
+        const errs = validateParaphrase(paraphrase);
+        if (errs.length) {
+          output.innerHTML = `<div class="err">Paraphrase needs: ${errs.join(', ')}</div>`;
+          return;
+        }
+
+        // disable UI
+        finishBtn.disabled = true;
+        working.style.display = 'inline';
+
+        try {
+          // send the complete-registration request
+          const res2 = await fetch('/api/complete-registration', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email, token, paraphrase })
+          });
+          const j2 = await res2.json();
+
+          // Show raw response for debugging (still helpful)
+          output.innerHTML = `<pre>${JSON.stringify(j2, null, 2)}</pre>`;
+
+          if (!j2 || !j2.success) {
+            output.innerHTML = `<div class="err">Failed: ${j2 && j2.error ? j2.error : 'Unknown server error'}</div>` + output.innerHTML;
+            return;
+          }
+
+          // The server returns:
+          // { success:true, message, anchorTxHash, package: {... minimal package ...} }
+          const pkg = (j2 && j2.package) ? j2.package : null;
+          if (!pkg) {
+            output.innerHTML = `<div class="err">Server did not return a package JSON. See debug output above.</div>` + output.innerHTML;
+            return;
+          }
+
+          // Determine tx hash (top-level preferred, fallback to older package field)
+          const txHash = j2.anchorTxHash || pkg.anchorTxHash || null;
+
+          // Friendly filename: prefer uniq_id (UNIQ-000123), then uniq_assigned, then older uniq_local, else timestamp
+          const friendly = pkg.uniq_id || pkg.uniq_assigned || pkg.uniq_local || ('uniqid_' + Date.now());
+          const filename = `uniqid_${String(friendly).replace(/[^a-z0-9._-]/ig, '_')}.json`;
+          const blob = new Blob([JSON.stringify(pkg, null, 2)], { type: 'application/json' });
+          const url = URL.createObjectURL(blob);
+
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = filename;
+          document.body.appendChild(a);
+          a.click();
+          a.remove();
+          URL.revokeObjectURL(url);
+
+          // Show success UI and anchor details
+          let infoHtml = `<div class="ok">✅ Your UNIQ ID package was created and downloaded as <strong>${filename}</strong>.</div>`;
+
+          if (j2.message) {
+            infoHtml += `<div class="small" style="margin-top:6px;">${String(j2.message)}</div>`;
+          }
+
+          infoHtml += `<div class="small" style="margin-top:6px;">Signer address: <code style="display:block;margin-top:4px;">${pkg.signer || 'N/A'}</code></div>`;
+          if (pkg.signature) {
+            infoHtml += `<div class="small" style="margin-top:6px;">Package signature: <code style="display:block;word-break:break-all;">${pkg.signature}</code></div>`;
+          }
+
+          output.innerHTML = infoHtml + output.innerHTML;
+
+        } catch (err) {
+          output.innerHTML = `<div class="err">Network/server error: ${err && err.message ? err.message : String(err)}</div>`;
+        } finally {
+          finishBtn.disabled = false;
+          working.style.display = 'none';
+        }
+      });
+
+    } catch (err) {
+      // catch for the initial token verification fetch
+      stage.innerHTML = `<div class="err">Verification API error: ${err && err.message ? err.message : String(err)}</div>`;
+      return;
+    }
+  })();
+  </script>
+</body>
+</html>
